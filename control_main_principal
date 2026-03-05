@@ -1,0 +1,386 @@
+---
+# =============================================================================
+# oracle_standby_check.yml
+# Consulta estado de PDBs y MRP en bases de datos Oracle standby RAC/Multitenant
+#
+# Uso:
+#   ansible-playbook -i inventory/hosts.yml oracle_standby_check.yml
+#
+# Requisito por host en el inventory:
+#   cdb  ->  nombre del CDB  (el .env se busca en /home/oracle/<cdb>.env)
+# =============================================================================
+
+- name: "ORACLE STANDBY CHECK | RAC Multitenant"
+  hosts: standby_rac
+  gather_facts: false
+  become: true
+  become_user: oracle
+  serial: 1
+
+  vars:
+    work_dir:          "/tmp/oracle_standby_check/{{ cdb }}"
+    report_output_dir: "{{ playbook_dir }}/reports"
+
+  # ---------------------------------------------------------------------------
+  # PRE-TASK: validar que el entorno Oracle existe antes de hacer nada
+  # ---------------------------------------------------------------------------
+  pre_tasks:
+
+    - name: "PRE | Verificar /home/oracle/{{ cdb }}.env"
+      ansible.builtin.stat:
+        path: "/home/oracle/{{ cdb }}.env"
+      register: env_stat
+
+    - name: "PRE | Abortar si no existe el fichero de entorno"
+      ansible.builtin.fail:
+        msg: "No existe /home/oracle/{{ cdb }}.env en {{ inventory_hostname }}"
+      when: not env_stat.stat.exists
+
+  # ---------------------------------------------------------------------------
+  # TASKS
+  # ---------------------------------------------------------------------------
+  tasks:
+
+    # ------------------------------------------------------------------
+    # TASK 1 - Crear directorio de trabajo y limpiar ejecución anterior
+    # ------------------------------------------------------------------
+    - name: "TASK 1 | Preparar directorio de trabajo en servidor"
+      ansible.builtin.file:
+        path:  "{{ work_dir }}"
+        state: directory
+        mode:  '0750'
+
+    - name: "TASK 1 | Limpiar ficheros de ejecución anterior"
+      ansible.builtin.file:
+        path:  "{{ item }}"
+        state: absent
+      loop:
+        - "{{ work_dir }}/check_standby.sql"
+        - "{{ work_dir }}/standby_output.txt"
+
+    # ------------------------------------------------------------------
+    # TASK 2 - Desplegar el script SQL en el servidor desde template .j2
+    # El template solo usa {{ cdb }} del inventory.
+    # El entorno Oracle (ORACLE_HOME, SID, etc.) viene del cdb.env.
+    # ------------------------------------------------------------------
+    - name: "TASK 2 | Desplegar check_standby.sql en {{ work_dir }}"
+      ansible.builtin.template:
+        src:  "templates/check_standby.sql.j2"
+        dest: "{{ work_dir }}/check_standby.sql"
+        mode: '0640'
+
+    # ------------------------------------------------------------------
+    # TASK 3 - Ejecutar el SQL contra la base de datos
+    # Source del cdb.env -> sqlplus / as sysdba -> salida a txt
+    # ------------------------------------------------------------------
+    - name: "TASK 3 | Ejecutar SQL contra {{ cdb }} (sysdba)"
+      ansible.builtin.shell: |
+        source /home/oracle/{{ cdb }}.env
+        ${ORACLE_HOME}/bin/sqlplus -s "/ as sysdba" \
+          @{{ work_dir }}/check_standby.sql \
+          > {{ work_dir }}/standby_output.txt 2>&1
+        echo "EXIT_CODE=$?" >> {{ work_dir }}/standby_output.txt
+      args:
+        executable: /bin/bash
+      changed_when: false
+      no_log: true
+
+    - name: "TASK 3 | Verificar que sqlplus generó salida"
+      ansible.builtin.stat:
+        path: "{{ work_dir }}/standby_output.txt"
+      register: out_stat
+
+    - name: "TASK 3 | Abortar si el fichero de salida está vacío"
+      ansible.builtin.fail:
+        msg: >
+          sqlplus no generó salida ({{ work_dir }}/standby_output.txt).
+          Comprueba /home/oracle/{{ cdb }}.env y la conectividad sysdba.
+      when: not out_stat.stat.exists or out_stat.stat.size == 0
+
+    # ------------------------------------------------------------------
+    # TASK 4 - Recoger el fichero de resultados a memoria
+    # ------------------------------------------------------------------
+    - name: "TASK 4 | Leer fichero de resultados del servidor"
+      ansible.builtin.slurp:
+        src: "{{ work_dir }}/standby_output.txt"
+      register: raw_slurp
+
+    - name: "TASK 4 | Decodificar contenido"
+      ansible.builtin.set_fact:
+        raw_output: "{{ raw_slurp['content'] | b64decode }}"
+
+    - name: "TASK 4 | Avisar si hay errores ORA- en la salida"
+      ansible.builtin.debug:
+        msg: "AVISO: errores ORA- detectados en {{ work_dir }}/standby_output.txt"
+      when: "'ORA-' in raw_output"
+
+    # ------------------------------------------------------------------
+    # TASK 5 - Parsear la salida y construir el dict cdb_report
+    # ------------------------------------------------------------------
+    - name: "TASK 5 | Parsear cabecera"
+      ansible.builtin.set_fact:
+        _p_host:      "{{ raw_output | regex_search('##HOSTNAME=([^\n]+)', '\\1') | first | default(inventory_hostname) | trim }}"
+        _p_cdb:       "{{ raw_output | regex_search('##CDB=([^\n]+)',      '\\1') | first | default(cdb)                | trim }}"
+        _p_ts:        "{{ raw_output | regex_search('(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})', '\\1') | first | default('N/A') | trim }}"
+
+    - name: "TASK 5 | Parsear DB_ROLE"
+      ansible.builtin.set_fact:
+        _dbrole: "{{ raw_output | regex_search('DB_NAME=[^\n]+') | default('') }}"
+
+    - name: "TASK 5 | Extraer campos DB_ROLE"
+      ansible.builtin.set_fact:
+        _p_db_name:    "{{ _dbrole | regex_search('DB_NAME=([^|]+)',    '\\1') | first | default('N/A') | trim }}"
+        _p_db_role:    "{{ _dbrole | regex_search('DB_ROLE=([^|]+)',    '\\1') | first | default('N/A') | trim }}"
+        _p_open_mode:  "{{ _dbrole | regex_search('OPEN_MODE=([^|]+)', '\\1') | first | default('N/A') | trim }}"
+        _p_protection: "{{ _dbrole | regex_search('PROTECTION=([^|]+)','\\1') | first | default('N/A') | trim }}"
+
+    - name: "TASK 5 | Parsear MRP"
+      ansible.builtin.set_fact:
+        _mrp: "{{ raw_output | regex_search('PROCESS=[^\n]+') | default('') }}"
+
+    - name: "TASK 5 | Extraer campos MRP"
+      ansible.builtin.set_fact:
+        _p_mrp_process:  "{{ _mrp | regex_search('PROCESS=([^|]+)',    '\\1') | first | default('NO MRP') | trim }}"
+        _p_mrp_status:   "{{ _mrp | regex_search('STATUS=([^|]+)',     '\\1') | first | default('N/A')    | trim }}"
+        _p_mrp_thread:   "{{ _mrp | regex_search('THREAD=([^|]+)',     '\\1') | first | default('N/A')    | trim }}"
+        _p_mrp_sequence: "{{ _mrp | regex_search('SEQUENCE=([^|]+)',   '\\1') | first | default('N/A')    | trim }}"
+        _p_mrp_delay:    "{{ _mrp | regex_search('DELAY_MINS=([^|]+)', '\\1') | first | default('0')      | trim }}"
+
+    - name: "TASK 5 | Parsear lags"
+      ansible.builtin.set_fact:
+        _p_apply_lag:     "{{ raw_output | regex_search('NAME=apply lag\\|VALUE=([^|]+)',     '\\1') | first | default('N/A') | trim }}"
+        _p_transport_lag: "{{ raw_output | regex_search('NAME=transport lag\\|VALUE=([^|]+)', '\\1') | first | default('N/A') | trim }}"
+
+    - name: "TASK 5 | Extraer líneas PDBs"
+      ansible.builtin.set_fact:
+        _pdb_lines: "{{ raw_output | regex_findall('PDB_NAME=[^\n]+') }}"
+
+    - name: "TASK 5 | Construir lista de PDBs"
+      ansible.builtin.set_fact:
+        _parsed_pdbs: >-
+          {{
+            _parsed_pdbs | default([]) + [{
+              'name':       item | regex_search('PDB_NAME=([^|]+)',    '\\1') | first | default('N/A') | trim,
+              'con_id':     item | regex_search('CON_ID=([^|]+)',      '\\1') | first | default('N/A') | trim,
+              'open_mode':  item | regex_search('OPEN_MODE=([^|]+)',   '\\1') | first | default('N/A') | trim,
+              'restricted': item | regex_search('RESTRICTED=([^|]+)',  '\\1') | first | default('NO')  | trim,
+              'status':     item | regex_search('STATUS=([^|]+)',      '\\1') | first | default('N/A') | trim
+            }]
+          }}
+      loop: "{{ _pdb_lines }}"
+      when: _pdb_lines | length > 0
+
+    - name: "TASK 5 | Lista PDBs vacía si no hay resultados"
+      ansible.builtin.set_fact:
+        _parsed_pdbs: []
+      when: _pdb_lines | length == 0
+
+    - name: "TASK 5 | Consolidar cdb_report"
+      ansible.builtin.set_fact:
+        cdb_report:
+          hostname:      "{{ _p_host }}"
+          cdb:           "{{ _p_cdb }}"
+          timestamp:     "{{ _p_ts }}"
+          db_name:       "{{ _p_db_name }}"
+          db_role:       "{{ _p_db_role }}"
+          open_mode:     "{{ _p_open_mode }}"
+          protection:    "{{ _p_protection }}"
+          mrp:
+            process:     "{{ _p_mrp_process }}"
+            status:      "{{ _p_mrp_status }}"
+            thread:      "{{ _p_mrp_thread }}"
+            sequence:    "{{ _p_mrp_sequence }}"
+            delay_mins:  "{{ _p_mrp_delay }}"
+          apply_lag:     "{{ _p_apply_lag }}"
+          transport_lag: "{{ _p_transport_lag }}"
+          pdbs:          "{{ _parsed_pdbs }}"
+          has_ora_error: "{{ 'ORA-' in raw_output }}"
+
+    # ------------------------------------------------------------------
+    # TASK 6 - Mostrar resumen en consola
+    # ------------------------------------------------------------------
+    - name: "TASK 6 | Resumen en consola"
+      ansible.builtin.debug:
+        msg:
+          - "========================================================"
+          - " HOST     : {{ cdb_report.hostname }}"
+          - " CDB      : {{ cdb_report.cdb }}"
+          - " ROL      : {{ cdb_report.db_role }}"
+          - " OPEN     : {{ cdb_report.open_mode }}"
+          - "--------------------------------------------------------"
+          - " MRP      : {{ cdb_report.mrp.process }} | {{ cdb_report.mrp.status }}"
+          - " SECUENCIA: {{ cdb_report.mrp.sequence }}"
+          - " APPLY LAG: {{ cdb_report.apply_lag }}"
+          - " TRANS LAG: {{ cdb_report.transport_lag }}"
+          - "--------------------------------------------------------"
+          - " PDBs     : {{ cdb_report.pdbs | length }}"
+          - "========================================================"
+
+    - name: "TASK 6 | ALERTA MRP no activo"
+      ansible.builtin.debug:
+        msg: "*** ALERTA *** MRP no encontrado o no aplicando en {{ cdb_report.cdb }} ({{ cdb_report.hostname }})"
+      when: >
+        cdb_report.mrp.process == 'NO MRP' or
+        cdb_report.mrp.status  != 'APPLYING_LOG'
+
+    - name: "TASK 6 | Detalle PDBs"
+      ansible.builtin.debug:
+        msg: "  {{ item.name | ljust(30) }}  OPEN: {{ item.open_mode | ljust(14) }}  REST: {{ item.restricted }}  STATUS: {{ item.status }}"
+      loop: "{{ cdb_report.pdbs }}"
+
+  # ---------------------------------------------------------------------------
+  # POST-TASK: generar reporte .log consolidado (una sola vez en localhost)
+  # ---------------------------------------------------------------------------
+  post_tasks:
+
+    - name: "POST | Consolidar resultados de todos los hosts"
+      ansible.builtin.set_fact:
+        all_reports: >-
+          {{
+            ansible_play_hosts
+            | map('extract', hostvars, 'cdb_report')
+            | select('defined')
+            | list
+          }}
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+    - name: "POST | Crear directorio de reportes"
+      ansible.builtin.file:
+        path:  "{{ report_output_dir }}"
+        state: directory
+        mode:  '0755'
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+    - name: "POST | Generar fichero de reporte .log"
+      ansible.builtin.template:
+        src:  "templates/standby_report.txt.j2"
+        dest: "{{ report_output_dir }}/standby_report_{{ lookup('pipe','date +\"%Y%m%d_%H%M%S\"') }}.log"
+        mode: '0644'
+      vars:
+        report_ts: "{{ lookup('pipe','date +\"%Y-%m-%d %H:%M:%S\"') }}"
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+    - name: "POST | Ruta del reporte generado"
+      ansible.builtin.debug:
+        msg: "Reporte en: {{ report_output_dir }}/standby_report_{{ lookup('pipe','date +\"%Y%m%d_%H%M%S\"') }}.log"
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+===============================================================================================>
+
+        -- =============================================================================
+-- check_standby.sql.j2
+-- CDB: {{ cdb }} | HOST: {{ inventory_hostname }}
+-- Entorno Oracle cargado desde: /home/oracle/{{ cdb }}.env
+-- =============================================================================
+
+SET LINESIZE   200
+SET PAGESIZE     0
+SET FEEDBACK   OFF
+SET HEADING    OFF
+SET TRIMOUT     ON
+SET TRIMSPOOL   ON
+SET NEWPAGE   NONE
+SET VERIFY     OFF
+SET ECHO       OFF
+
+PROMPT ============================================================
+PROMPT  ORACLE STANDBY STATUS REPORT
+PROMPT  CDB      : {{ cdb }}
+PROMPT  HOST     : {{ inventory_hostname }}
+PROMPT ============================================================
+SELECT 'FECHA    : ' || TO_CHAR(SYSDATE,'YYYY-MM-DD HH24:MI:SS') FROM dual;
+PROMPT
+
+-- BASE DE DATOS
+PROMPT ------------------------------------------------------------
+PROMPT  BASE DE DATOS
+PROMPT ------------------------------------------------------------
+SELECT
+    'DB NAME       : ' || name            || CHR(10) ||
+    'ROL           : ' || database_role   || CHR(10) ||
+    'OPEN MODE     : ' || open_mode       || CHR(10) ||
+    'PROTECTION    : ' || protection_mode
+FROM v$database;
+PROMPT
+
+-- MRP
+PROMPT ------------------------------------------------------------
+PROMPT  MRP (Managed Recovery Process)
+PROMPT ------------------------------------------------------------
+SELECT
+    'PROCESO       : ' || process         || CHR(10) ||
+    'ESTADO        : ' || status          || CHR(10) ||
+    'THREAD        : ' || thread#         || CHR(10) ||
+    'SECUENCIA     : ' || sequence#       || CHR(10) ||
+    'DELAY (min)   : ' || delay_mins
+FROM v$managed_standby
+WHERE process LIKE 'MRP%';
+
+SELECT '*** ALERTA: MRP NO ENCONTRADO en v$managed_standby ***'
+FROM dual
+WHERE NOT EXISTS (
+    SELECT 1 FROM v$managed_standby WHERE process LIKE 'MRP%'
+);
+PROMPT
+
+-- LAG
+PROMPT ------------------------------------------------------------
+PROMPT  LAG (Data Guard Stats)
+PROMPT ------------------------------------------------------------
+SELECT
+    RPAD(name, 20) || ': ' || NVL(value,'N/A') || ' ' || NVL(unit,'')
+FROM v$dataguard_stats
+WHERE name IN ('apply lag','transport lag','apply finish time')
+ORDER BY name;
+PROMPT
+
+-- PDBs con problema (estado distinto de MOUNTED)
+PROMPT ------------------------------------------------------------
+PROMPT  PDBs CON PROBLEMA (estado distinto de MOUNTED)
+PROMPT ------------------------------------------------------------
+PROMPT  NOMBRE                         CON_ID  OPEN MODE          REST   STATUS
+PROMPT  ------------------------------ ------  -----------------  -----  ----------
+
+SELECT
+    '  ' ||
+    RPAD(p.name,       30) || '  ' ||
+    RPAD(p.con_id,      6) || '  ' ||
+    RPAD(p.open_mode,  17) || '  ' ||
+    RPAD(p.restricted,  5) || '  ' ||
+    NVL(d.status, 'N/A')
+FROM v$pdbs p
+LEFT JOIN dba_pdbs d ON d.con_id = p.con_id
+WHERE p.name      != 'PDB$SEED'
+  AND p.open_mode != 'MOUNTED'
+ORDER BY p.name;
+
+SELECT '  (Todas las PDBs en MOUNTED - OK)'
+FROM dual
+WHERE NOT EXISTS (
+    SELECT 1 FROM v$pdbs
+    WHERE name      != 'PDB$SEED'
+      AND open_mode != 'MOUNTED'
+);
+
+PROMPT
+SELECT
+    '  Total PDBs        : ' || COUNT(*)                                                 || CHR(10) ||
+    '  PDBs MOUNTED (OK) : ' || SUM(CASE WHEN open_mode  = 'MOUNTED' THEN 1 ELSE 0 END) || CHR(10) ||
+    '  PDBs con problema : ' || SUM(CASE WHEN open_mode != 'MOUNTED' THEN 1 ELSE 0 END)
+FROM v$pdbs
+WHERE name != 'PDB$SEED';
+
+PROMPT
+PROMPT ============================================================
+PROMPT  FIN DEL REPORTE
+PROMPT ============================================================
+
+EXIT;
