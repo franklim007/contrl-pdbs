@@ -1,3 +1,8 @@
+SELECT '  DETALLE APPLY LAG'                                           FROM dual;
+SELECT '  -----------------'                                           FROM dual;
+SELECT '  ' || RPAD(name,25) || ': ' || NVL(value,'N/A') || ' ' || NVL(unit,'') FROM v$dataguard_stats ORDER BY name;
+SELECT ' ' FROM dual;
+
 SELECT '------------------------------------------------------------' FROM dual;
 SELECT '  APPLY STATUS (Active Data Guard)' FROM dual;
 SELECT '------------------------------------------------------------' FROM dual;
