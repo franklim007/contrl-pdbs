@@ -1,3 +1,10 @@
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT '  APPLY STATUS (Active Data Guard)' FROM dual;
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT RPAD(process,15) || ' ' || RPAD(status,20) || ' thread#: ' || thread# || ' seq#: ' || sequence# FROM v$managed_standby ORDER BY process;
+SELECT ' ' FROM dual;
+********************************************************************
+
 SET LINESIZE   200
 SET PAGESIZE   50000
 SET FEEDBACK   OFF
