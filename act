@@ -1,3 +1,69 @@
+SET LINESIZE   200
+SET PAGESIZE   50000
+SET FEEDBACK   OFF
+SET HEADING    OFF
+SET TRIMOUT     ON
+SET TRIMSPOOL   ON
+SET NEWPAGE   NONE
+SET VERIFY     OFF
+SET ECHO       OFF
+
+PROMPT ============================================================
+PROMPT  ORACLE STANDBY STATUS REPORT
+PROMPT  CDB      : {{ cdb }}
+PROMPT  HOST     : {{ inventory_hostname }}
+PROMPT ============================================================
+SELECT 'FECHA    : ' || TO_CHAR(SYSDATE,'YYYY-MM-DD HH24:MI:SS') FROM dual;
+PROMPT
+
+PROMPT ------------------------------------------------------------
+PROMPT  BASE DE DATOS
+PROMPT ------------------------------------------------------------
+SELECT 'DB NAME       : ' || name            FROM v$database;
+SELECT 'ROL           : ' || database_role   FROM v$database;
+SELECT 'OPEN MODE     : ' || open_mode       FROM v$database;
+SELECT 'PROTECTION    : ' || protection_mode FROM v$database;
+PROMPT
+
+PROMPT ------------------------------------------------------------
+PROMPT  MRP (Managed Recovery Process)
+PROMPT ------------------------------------------------------------
+SELECT 'PROCESO       : ' || process    FROM v$managed_standby WHERE process LIKE 'MRP%';
+SELECT 'ESTADO        : ' || status     FROM v$managed_standby WHERE process LIKE 'MRP%';
+SELECT 'THREAD        : ' || thread#    FROM v$managed_standby WHERE process LIKE 'MRP%';
+SELECT 'SECUENCIA     : ' || sequence#  FROM v$managed_standby WHERE process LIKE 'MRP%';
+SELECT 'DELAY (min)   : ' || delay_mins FROM v$managed_standby WHERE process LIKE 'MRP%';
+SELECT '*** ALERTA: MRP NO ENCONTRADO ***' FROM dual WHERE NOT EXISTS (SELECT 1 FROM v$managed_standby WHERE process LIKE 'MRP%');
+PROMPT
+
+PROMPT ------------------------------------------------------------
+PROMPT  LAG (Data Guard Stats)
+PROMPT ------------------------------------------------------------
+SELECT RPAD(name,20) || ': ' || NVL(value,'N/A') || ' ' || NVL(unit,'') FROM v$dataguard_stats WHERE name IN ('apply lag','transport lag','apply finish time') ORDER BY name;
+PROMPT
+
+PROMPT ------------------------------------------------------------
+PROMPT  PDBs CON PROBLEMA (estado distinto de MOUNTED)
+PROMPT ------------------------------------------------------------
+PROMPT  NOMBRE                         CON_ID  OPEN MODE          REST   STATUS
+PROMPT  ------------------------------ ------  -----------------  -----  ----------
+SELECT '  ' || RPAD(p.name,30) || '  ' || RPAD(p.con_id,6) || '  ' || RPAD(p.open_mode,17) || '  ' || RPAD(p.restricted,5) || '  ' || NVL(d.status,'N/A') FROM v$pdbs p LEFT JOIN dba_pdbs d ON d.con_id = p.con_id WHERE p.name != 'PDB$SEED' AND p.open_mode != 'MOUNTED' ORDER BY p.name;
+SELECT '  (Todas las PDBs en MOUNTED - OK)' FROM dual WHERE NOT EXISTS (SELECT 1 FROM v$pdbs WHERE name != 'PDB$SEED' AND open_mode != 'MOUNTED');
+PROMPT
+SELECT '  Total PDBs        : ' || COUNT(*) FROM v$pdbs WHERE name != 'PDB$SEED';
+SELECT '  PDBs MOUNTED (OK) : ' || SUM(CASE WHEN open_mode = 'MOUNTED'  THEN 1 ELSE 0 END) FROM v$pdbs WHERE name != 'PDB$SEED';
+SELECT '  PDBs con problema : ' || SUM(CASE WHEN open_mode != 'MOUNTED' THEN 1 ELSE 0 END) FROM v$pdbs WHERE name != 'PDB$SEED';
+PROMPT
+
+PROMPT ============================================================
+PROMPT  FIN DEL REPORTE
+PROMPT ============================================================
+
+EXIT;
+
+
+******************************************************************************************************************************
+
 ============================================================
 ORACLE STANDBY STATUS REPORT
 CDB      : cxxxx
