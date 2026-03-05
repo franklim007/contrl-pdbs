@@ -1,8 +1,43 @@
+============================================================
+ORACLE STANDBY STATUS REPORT
+CDB      : cxxxx
+HOST     : xxxxx
+============================================================
+
+FECHA    : 2026-03-05 19:41:11
+
 ---------------------------------------------------------- PROMPT  BASE DE DATOS
 ----------------------------------------------------------- SELECT 'DB NAME       : ' || name            FROM v$database
 ROL           : PHYSICAL STANDBY
 OPEN MODE     : READ ONLY WITH APPLY
 PROTECTION    : MAXIMUM PERFORMANCE
+
+
+----------------------------------------------------------- PROMPT  MRP (Managed Recovery Process)
+----------------------------------------------------------- SELECT 'PROCESO       : ' || process    FROM v$managed_standby WHERE process LIKE 'MRP%'
+
+*** ALERTA: MRP NO ENCONTRADO en v$managed_standby ***
+
+----------------------------------------------------------- PROMPT  LAG (Data Guard Stats)
+----------------------------------------------------------- SELECT RPAD(name,20) || ': ' || NVL(value,'N/A') || ' ' || NVL(unit,'')
+SP2-0734: unknown command beginning "FROM v$dat..." - rest of line ignored.
+SP2-0734: unknown command beginning "WHERE name..." - rest of line ignored.
+SP2-0734: unknown command beginning "ORDER BY n..." - rest of line ignored.
+
+----------------------------------------------------------- PROMPT  PDBs CON PROBLEMA (estado distinto de MOUNTED)
+----------------------------------------------------------- PROMPT  NOMBRE                         CON_ID  OPEN MODE          REST   STATUS
+------------------------------ ------  -----------------  -----  ---------
+  (Todas las PDBs en MOUNTED - OK)
+
+  Total PDBs        : 10
+  PDBs MOUNTED (OK) : 10
+  PDBs con problema : 0
+
+============================================================
+FIN DEL REPORTE
+============================================================
+EXIT_CODE=0
+
 
 
 -- =============================================================================
