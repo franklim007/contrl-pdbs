@@ -1,0 +1,112 @@
+---
+- name: "ORACLE STANDBY CHECK"
+  hosts: standby_rac
+  gather_facts: false
+  become: true
+  become_user: oracle
+  serial: 1
+
+  vars:
+    script_dir:       "/tmp/ansible/scripts"
+    log_dir:          "/tmp/ansible/salida"
+    sql_script:       "{{ script_dir }}/check_standby_{{ cdb }}.sql"
+    log_file:         "{{ log_dir }}/{{ cdb }}_standby.log"
+    local_report_dir: "{{ playbook_dir }}/reports"
+    local_log_file:   "{{ local_report_dir }}/{{ inventory_hostname }}_{{ cdb }}_standby.log"
+    consolidated_log: "{{ local_report_dir }}/standby_consolidado.log"
+
+  pre_tasks:
+
+    - name: "PRE | Verificar /home/oracle/{{ cdb }}.env en {{ inventory_hostname }}"
+      ansible.builtin.stat:
+        path: "/home/oracle/{{ cdb }}.env"
+      register: env_stat
+
+    - name: "PRE | Abortar si no existe el fichero de entorno"
+      ansible.builtin.fail:
+        msg: "No existe /home/oracle/{{ cdb }}.env en {{ inventory_hostname }}"
+      when: not env_stat.stat.exists
+
+  tasks:
+
+    - name: "TASK 1 | Crear directorios en {{ inventory_hostname }}"
+      ansible.builtin.file:
+        path:  "{{ item }}"
+        state: directory
+        mode:  '0755'
+      with_items:
+        - "{{ script_dir }}"
+        - "{{ log_dir }}"
+
+    - name: "TASK 2 | Desplegar check_standby_{{ cdb }}.sql en {{ inventory_hostname }}"
+      ansible.builtin.template:
+        src:  "templates/check_standby.sql.j2"
+        dest: "{{ sql_script }}"
+        mode: '0640'
+
+    - name: "TASK 3 | Ejecutar consulta standby CDB {{ cdb }} en {{ inventory_hostname }}"
+      ansible.builtin.shell: |
+        source /home/oracle/{{ cdb }}.env
+        ${ORACLE_HOME}/bin/sqlplus -s "/ as sysdba" @{{ sql_script }} > {{ log_file }} 2>&1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      no_log: true
+
+    - name: "TASK 3 | Verificar que el log se ha generado"
+      ansible.builtin.stat:
+        path: "{{ log_file }}"
+      register: log_stat
+
+    - name: "TASK 3 | Abortar si sqlplus no genero el log"
+      ansible.builtin.fail:
+        msg: "sqlplus no genero {{ log_file }} en {{ inventory_hostname }}"
+      when: not log_stat.stat.exists or log_stat.stat.size == 0
+
+    - name: "TASK 4 | Crear directorio de reportes en maquina de control"
+      ansible.builtin.file:
+        path:  "{{ local_report_dir }}"
+        state: directory
+        mode:  '0755'
+      delegate_to: localhost
+      become: false
+
+    - name: "TASK 4 | Fetch log {{ cdb }} desde {{ inventory_hostname }}"
+      ansible.builtin.fetch:
+        src:  "{{ log_file }}"
+        dest: "{{ local_log_file }}"
+        flat: true
+
+    - name: "TASK 4 | Log recibido en maquina de control"
+      ansible.builtin.debug:
+        msg: "Log disponible en: {{ local_log_file }}"
+      delegate_to: localhost
+      become: false
+
+  post_tasks:
+
+    - name: "POST | Unificar logs en {{ consolidated_log }}"
+      ansible.builtin.shell: |
+        > {{ consolidated_log }}
+        echo "============================================================" >> {{ consolidated_log }}
+        echo "  ORACLE STANDBY - REPORTE CONSOLIDADO"                       >> {{ consolidated_log }}
+        echo "  Generado: $(date '+%Y-%m-%d %H:%M:%S')"                     >> {{ consolidated_log }}
+        echo "============================================================" >> {{ consolidated_log }}
+        echo "" >> {{ consolidated_log }}
+        for f in $(ls {{ local_report_dir }}/*_standby.log 2>/dev/null | sort); do
+          cat "$f" >> {{ consolidated_log }}
+          echo ""  >> {{ consolidated_log }}
+        done
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+    - name: "POST | Reporte consolidado listo para enviar"
+      ansible.builtin.debug:
+        msg: "{{ consolidated_log }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
