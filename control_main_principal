@@ -1,3 +1,8 @@
+SELECT 'DB NAME       : ' || name          FROM v$database;
+SELECT 'ROL           : ' || database_role FROM v$database;
+SELECT 'OPEN MODE     : ' || open_mode     FROM v$database;
+SELECT 'PROTECTION    : ' || protection_mode FROM v$database;
+
 ----------------------------------------------------------- PROMPT  BASE DE DATOS
 ----------------------------------------------------------- SELECT
 SP2-0734: unknown command beginning "'DB NAME  ..." - rest of line ignored.
