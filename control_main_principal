@@ -1,3 +1,13 @@
+----------------------------------------------------------- PROMPT  BASE DE DATOS
+----------------------------------------------------------- SELECT
+SP2-0734: unknown command beginning "'DB NAME  ..." - rest of line ignored.
+SP2-0734: unknown command beginning "'ROL      ..." - rest of line ignored.
+SP2-0734: unknown command beginning "'OPEN MODE..." - rest of line ignored.
+SP2-0734: unknown command beginning "'PROTECTIO..." - rest of line ignored.
+SP2-0044: For a list of known commands enter HELP
+
+
+
 ---
 # =============================================================================
 # oracle_standby_check.yml
