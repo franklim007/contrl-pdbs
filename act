@@ -1,3 +1,10 @@
+---------------------------------------------------------- PROMPT  BASE DE DATOS
+----------------------------------------------------------- SELECT 'DB NAME       : ' || name            FROM v$database
+ROL           : PHYSICAL STANDBY
+OPEN MODE     : READ ONLY WITH APPLY
+PROTECTION    : MAXIMUM PERFORMANCE
+
+
 -- =============================================================================
 -- check_standby.sql.j2
 -- CDB: {{ cdb }} | HOST: {{ inventory_hostname }}
