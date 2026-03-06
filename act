@@ -1,4 +1,31 @@
-  - name: "POST | Unificar logs en {{ consolidated_log }}"
+    echo "" >> "$problema_log"
+    echo "  HOST/CDB                              APPLY LAG             PDB                            CON_ID  OPEN MODE          RECOVERY" >> "$problema_log"
+    echo "  ------------------------------------  --------------------  ------------------------------  ------  -----------------  --------" >> "$problema_log"
+    count=0
+    declare -A seen
+    for f in $(ls {{ local_report_dir }}/*_standby.log 2>/dev/null | sort); do
+      cdb=$(basename "$f" | awk -F'_standby' '{print $1}' | awk -F'_' '{print $NF}')
+      if [ -n "${seen[$cdb]}" ]; then
+        continue
+      fi
+      seen[$cdb]=1
+      hostcdb=$(basename "$f" _standby.log)
+      apply_lag=$(grep "apply lag" "$f" | awk -F': ' '{print $2}' | tr -d ' ')
+      while IFS= read -r line; do
+        echo "  $(printf '%-36s' $hostcdb)  $(printf '%-20s' ${apply_lag:-N/A})  $line" >> "$problema_log"
+        count=$((count + 1))
+      done < <(grep -E "^\s+\S+\s+[0-9]+\s+.*DISABLED" "$f" | sed 's/^[[:space:]]*//')
+    done
+    echo "" >> "$problema_log"
+    if [ "$count" -eq 0 ]; then
+      echo "  Todas las PDBs tienen RECOVERY ENABLED - OK" >> "$problema_log"
+    else
+      echo "  Total PDBs con RECOVERY DISABLED: $count"   >> "$problema_log"
+    fi
+  args:
+
+
+- name: "POST | Unificar logs en {{ consolidated_log }}"
       ansible.builtin.shell: |
         > {{ consolidated_log }}
         echo "============================================================" >> {{ consolidated_log }}
