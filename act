@@ -1,4 +1,29 @@
-    - name: "POST | Generar fichero con PDBs en RECOVERY DISABLED"
+  - name: "POST | Unificar logs en {{ consolidated_log }}"
+      ansible.builtin.shell: |
+        > {{ consolidated_log }}
+        echo "============================================================" >> {{ consolidated_log }}
+        echo "  ORACLE STANDBY - REPORTE CONSOLIDADO"                       >> {{ consolidated_log }}
+        echo "  Generado: $(date '+%Y-%m-%d %H:%M:%S')"                     >> {{ consolidated_log }}
+        echo "============================================================" >> {{ consolidated_log }}
+        echo "" >> {{ consolidated_log }}
+        declare -A seen
+        for f in $(ls {{ local_report_dir }}/*_standby.log 2>/dev/null | sort); do
+          cdb=$(basename "$f" _standby.log | rev | cut -d'_' -f1 | rev)
+          if [ -z "${seen[$cdb]}" ]; then
+            seen[$cdb]=1
+            cat "$f" >> {{ consolidated_log }}
+            echo "" >> {{ consolidated_log }}
+          fi
+        done
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+
+- name: "POST | Generar fichero con PDBs en RECOVERY DISABLED"
       ansible.builtin.shell: |
         problema_log="{{ local_report_dir }}/standby_pdbs_problema.txt"
         > "$problema_log"
