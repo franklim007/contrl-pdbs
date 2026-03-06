@@ -1,3 +1,6 @@
+SELECT '  ' || RPAD(name,30) || '  ' || RPAD(con_id,6) || '  ' || RPAD(open_mode,17) || '  ' || recovery FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery = 'DISABLED' ORDER BY name;
+
+
 SELECT '  ' || RPAD(process,14) || '  ' || RPAD(status,20) || '  ' || RPAD(thread#,6) || '  ' || sequence# FROM v$managed_standby ORDER BY process;
 
 SELECT '  ' || RPAD(p.name,30) || '  ' || RPAD(p.con_id,6) || '  ' || RPAD(p.open_mode,17) || '  ' || RPAD(p.restricted,5) || '  ' || NVL(d.status,'N/A') 
