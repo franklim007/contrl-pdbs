@@ -1,3 +1,5 @@
+SELECT '  ' || RPAD(p.name,30) || '  ' || RPAD(p.con_id,6) || '  ' || RPAD(p.open_mode,17) || '  ' || RPAD(p.restricted,5) || '  ' || NVL(d.status,'N/A') FROM v$pdbs p LEFT JOIN dba_pdbs d ON d.con_id = p.con_id WHERE p.name != 'PDB$SEED' AND d.status = 'DISABLED' ORDER BY p.name;
+
 - name: "POST | Generar fichero con CDBs que tienen PDBs con problema"
       ansible.builtin.shell: |
         problema_log="{{ local_report_dir }}/standby_pdbs_problema.txt"
