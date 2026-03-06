@@ -1,3 +1,17 @@
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT '  PDBs CON RECOVERY DISABLED (gv$containers)'                 FROM dual;
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT '  NOMBRE                         CON_ID  OPEN MODE          RECOVERY' FROM dual;
+SELECT '  ------------------------------ ------  -----------------  --------' FROM dual;
+SELECT '  ' || RPAD(name,30) || '  ' || RPAD(con_id,6) || '  ' || RPAD(open_mode,17) || '  ' || recovery_status FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery_status = 'DISABLED' ORDER BY name;
+SELECT '  (No hay PDBs con RECOVERY DISABLED - OK)' FROM dual WHERE NOT EXISTS (SELECT 1 FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery_status = 'DISABLED');
+SELECT ' ' FROM dual;
+SELECT '  Total PDBs             : ' || COUNT(*) FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2;
+SELECT '  PDBs RECOVERY DISABLED : ' || COUNT(*) FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery_status = 'DISABLED';
+SELECT '  PDBs RECOVERY ENABLED  : ' || COUNT(*) FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery_status = 'ENABLED';
+SELECT ' ' FROM dual;
+
+
 SELECT '  ' || RPAD(name,30) || '  ' || RPAD(con_id,6) || '  ' || RPAD(open_mode,17) || '  ' || recovery FROM gv$containers WHERE name != 'PDB$SEED' AND con_id > 2 AND recovery = 'DISABLED' ORDER BY name;
 
 
