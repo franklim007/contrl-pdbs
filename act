@@ -1,4 +1,11 @@
-    echo "" >> "$problema_log"
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT '  LAG (Data Guard Stats)' FROM dual;
+SELECT '------------------------------------------------------------' FROM dual;
+SELECT RPAD(name,20) || ': ' || NVL(value,'N/A') || ' ' || NVL(unit,'') FROM v$dataguard_stats WHERE name IN ('apply lag','transport lag','apply finish time') ORDER BY name;
+SELECT ' ' FROM dual;
+
+***********************************************************
+echo "" >> "$problema_log"
     echo "  HOST/CDB                              APPLY LAG             PDB                            CON_ID  OPEN MODE          RECOVERY" >> "$problema_log"
     echo "  ------------------------------------  --------------------  ------------------------------  ------  -----------------  --------" >> "$problema_log"
     count=0
